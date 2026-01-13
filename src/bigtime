@@ -108,6 +108,8 @@ OPTIONS:
         Hourly time signal.
     -t, --timer [H]H:MM
         Set timer.
+    -c, --countdown [H]H:MM [AM|am|PM|pm]
+        Countdown to specified time. Shows remaining time until target.
     --file FILENAME
         Use a custom digits file (filename only)
     -w, --preview
@@ -960,7 +962,7 @@ display_time() {
 }
 
 parse_time() {
-  if [[ ${__o[f]} ]]; then
+  if [[ ${__o[f]} || $_c_active ]]; then
     _H="${__T_timedate[2]}"  # hour (00-23)
     [[ $_p ]] && unset _p
   else
@@ -1535,6 +1537,54 @@ manage_timer() {
 ## / |||  ||_| \
 ## /TiMER
 
+##   _      _   _  _
+##  / \ | ||\ ||_|/ \|  ||\ |
+##  \_\_\_/| \||_|\_/|/\|| \|
+## COUNTDOWN
+
+set_countdown() {
+  local f="^[0-2]?[0-9]:[0-5][0-9][[:space:]]?(AM|am|PM|pm)?$"
+  [[ $_c_time =~ $f ]] || return 1
+  if [[ ${__o[f]} ]]; then
+    _c_time="$(_format_date "$_c_time" "%H:%M:%S")" || return 1
+  else
+    _c_time="$(LC_TIME=C _format_date "$_c_time" "%I:%M:%S %p")" || return 1
+  fi
+  _c_sec="$(_to_epoch "$_c_time")" || return 1
+  ((_c_sec<=EPOCHSECONDS)) && ((_c_sec+=86400))
+  return 0
+}
+
+activate_countdown() {
+  [[ ${__o[c_down]} && $_c_sec ]] || return 1
+  _c_active=1
+  return 0
+}
+
+countdown_elapse() {
+  [[ ! $_c_active ]] && return 1
+  ((_c_time_left=_c_sec-EPOCHSECONDS))
+  ((_c_time_left=_c_time_left>0?_c_time_left:0))
+  return 0
+}
+
+display_countdown() {
+  [[ ! $_c_active ]] && return 1
+  countdown_elapse
+  ((_c_time_left<=0)) && {
+    # Countdown reached - show 00:00:00
+    _split_time "$(LC_TIME=C _sec_to_hms 0)"
+    return 0
+  }
+  _split_time "$(LC_TIME=C _sec_to_hms "$_c_time_left")"
+  return 0
+}
+
+##    _      _   _  _
+##  // \ | ||\ ||_|/ \|  ||\ |
+## / \_\_\_/| \||_|\_/|/\|| \|
+## /COUNTDOWN
+
 ##
 ## |\/| /\ o|\ |
 ## |  |/--\|| \|
@@ -1550,6 +1600,7 @@ _opts=$(LC_ALL=C getopt                     \
   --long "background:"                      \
   --long "big-seconds"                      \
   --long "blink"                            \
+  --long "countdown:"                       \
   --long "date"                             \
   --long "DEBUG"                            \
   --long "edit:"                            \
@@ -1570,7 +1621,7 @@ _opts=$(LC_ALL=C getopt                     \
   --long "timezone"                         \
   --long "version"                          \
   --long "vertical"                         \
-  --options "a:B:Sbde:fF:hClNwqrniso:t:zvV" \
+  --options "a:B:Sbde:fF:hClNwqrnisc:o:t:zvV" \
   --name "$progname"                        \
   -- "$@"                                   \
 ) || exit 1
@@ -1585,6 +1636,7 @@ do
     -a | --alarm        ) [[ ${__o[q]} ]] && { shift 2; continue; }; __o[a]=1; _a_time="$2"; shift 2 ;;
     -B | --background   ) set_color --bg "$2" || { _err "error: invalid background color."; exit 1; }; shift 2 ;;
     -b | --blink        ) [[ ${__o[v]} ]] && { shift; continue; }; __o[b]=1; shift ;;
+    -c | --countdown    ) __o[c_down]=1; _c_time="$2"; shift 2 ;;
     -C | --list-colors  ) list_colors; exit 0 ;;
     -d | --date         ) __o[d]=1; shift ;;
     --DEBUG             ) __o[DEBUG]=1; shift ;;
@@ -2002,6 +2054,9 @@ set_snooze --default
 if [[ ${__o[t]} ]]; then set_timer || { _err "error: invalid timer duration."; exit 1; }; fi
 [[ ${__o[t]} ]] && activate_timer
 
+if [[ ${__o[c_down]} ]]; then set_countdown || { _err "error: invalid countdown time."; exit 1; }; fi
+[[ ${__o[c_down]} ]] && activate_countdown
+
 init_clock
 
 trap 'exit_clock "-- interrupted by user."' INT QUIT
@@ -2036,7 +2091,7 @@ do
 
 _sync
 
-display_time || display_alarm || display_timer
+display_countdown || display_time || display_alarm || display_timer
 manage_alarm
 manage_timer
 parse_time
